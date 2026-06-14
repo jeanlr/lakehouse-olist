@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<configuration>
+
+    <!-- PostgreSQL -->
+
+    <property>
+        <name>javax.jdo.option.ConnectionURL</name>
+        <value>jdbc:postgresql://${POSTGRES_HOST}:5432/${HIVE_METASTORE_DB}</value>
+    </property>
+
+    <property>
+        <name>javax.jdo.option.ConnectionDriverName</name>
+        <value>org.postgresql.Driver</value>
+    </property>
+
+    <property>
+        <name>javax.jdo.option.ConnectionUserName</name>
+        <value>${POSTGRES_USER}</value>
+    </property>
+
+    <property>
+        <name>javax.jdo.option.ConnectionPassword</name>
+        <value>${POSTGRES_PASSWORD}</value>
+    </property>
+
+    <!-- Hive Metastore -->
+
+    <property>
+        <name>hive.metastore.uris</name>
+        <value>thrift://${HIVE_METASTORE_HOST}:9083</value>
+    </property>
+
+    <!-- Warehouse -->
+
+    <property>
+        <name>hive.metastore.warehouse.dir</name>
+        <value>${WAREHOUSE_PATH}</value>
+    </property>
+
+    <!-- MinIO -->
+
+    <property>
+        <name>fs.s3a.endpoint</name>
+        <value>${MINIO_ENDPOINT}</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.access.key</name>
+        <value>${AWS_ACCESS_KEY_ID}</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.secret.key</name>
+        <value>${AWS_SECRET_ACCESS_KEY}</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.path.style.access</name>
+        <value>true</value>
+    </property>
+
+    <property>
+        <name>fs.s3a.connection.ssl.enabled</name>
+        <value>false</value>
+    </property>
+
+</configuration>

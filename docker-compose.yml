@@ -1,0 +1,465 @@
+networks:
+  network_olist_lakehouse_bhv:
+    driver: bridge
+
+volumes:
+  minio_db:
+  postgres_db_airflow:
+  spark_db:
+  #airflow_logs:
+  notebooks_db:
+  trino_data:
+  metabase_postgres_db:
+  postgres_olist_db:
+
+services:
+  # ==================== MINIO (Object Storage) ====================
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: minio_bhv
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_db:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== POSTGRES (para Airflow) ====================
+  postgres:
+    image: postgres:13
+    container_name: postgres_db_airflow
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Adicione esta variável para criar múltiplos bancos
+      POSTGRES_MULTIPLE_DATABASES: metabase,hive_metastore
+    volumes:
+      - postgres_db_airflow:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== SPARK MASTER ====================
+  spark-master:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-master-bhv
+    ports:
+      - "8083:8080"
+      - "7077:7077"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=http://minio:9000
+    volumes:
+      - spark_db:/opt/spark/data
+      - ./scripts:/opt/spark/scripts
+      - ./spark/entrypoint.sh:/opt/entrypoint.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== SPARK WORKERS ====================
+  spark-worker-1:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker-1-bhv
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=2
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=http://minio:9000
+    volumes:
+      - spark_db:/opt/spark/data
+      - ./scripts:/opt/spark/scripts
+      - ./spark/entrypoint.sh:/opt/entrypoint.sh
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    networks:
+      - network_olist_lakehouse_bhv
+
+  spark-worker-2:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker-2-bhv
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=2
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=http://minio:9000
+    volumes:
+      - spark_db:/opt/spark/data
+      - ./scripts:/opt/spark/scripts
+      - ./spark/entrypoint.sh:/opt/entrypoint.sh
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    networks:
+      - network_olist_lakehouse_bhv
+
+  spark-worker-3:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker-3-bhv
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1g
+      - SPARK_WORKER_CORES=2
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MINIO_ENDPOINT=http://minio:9000
+    volumes:
+      - spark_db:/opt/spark/data
+      - ./scripts:/opt/spark/scripts
+      - ./spark/entrypoint.sh:/opt/entrypoint.sh
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== AIRFLOW ====================
+  airflow-init:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-init-bhv
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+    entrypoint: /bin/bash
+    command: -c "airflow db init && airflow users create --username ${AIRFLOW_ADMIN_USERNAME} --firstname Admin --lastname User --role Admin --email ${AIRFLOW_ADMIN_EMAIL} --password ${AIRFLOW_ADMIN_PASSWORD} || true"
+    networks:
+      - network_olist_lakehouse_bhv
+
+  airflow-webserver:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-webserver-bhv
+    ports:
+      - "8081:8080"
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=${FERNET_KEY}
+      - AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE=UTC
+      - MINIO_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+    # Spark Configuration
+      - SPARK_MASTER=${SPARK_MASTER}
+      - SPARK_DRIVER_HOST=airflow-webserver
+      
+      # Python paths
+      - PYTHONPATH=/opt/airflow:/opt/airflow/scripts
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./config:/opt/airflow/config
+      #- ./dbt:/opt/airflow/dbt
+    user: "root"
+    command: webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - network_olist_lakehouse_bhv
+
+  airflow-scheduler:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile
+    container_name: airflow-scheduler-bhv
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=${FERNET_KEY}
+      - MINIO_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      # Spark Configuration
+      - SPARK_MASTER=${SPARK_MASTER}
+      - SPARK_DRIVER_HOST=airflow-scheduler
+      
+      # Python paths
+      - PYTHONPATH=/opt/airflow:/opt/airflow/scripts
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./config:/opt/airflow/config
+      #- ./dbt:/opt/airflow/dbt
+    user: "root"
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== JUPYTER ====================
+  jupyter:
+    build:
+      context: ./jupyter
+      dockerfile: Dockerfile
+
+    container_name: jupyter-bhv
+
+    ports:
+      - "8888:8888"
+
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+
+      # MinIO
+      - MINIO_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+
+      # Spark
+      - SPARK_MASTER=spark://spark-master:7077
+      - SPARK_DRIVER_HOST=jupyter
+
+      # PostgreSQL Olist
+      - POSTGRES_OLIST_HOST=${POSTGRES_OLIST_HOST}
+      - POSTGRES_OLIST_PORT=${POSTGRES_OLIST_PORT}
+      - POSTGRES_OLIST_DB=${POSTGRES_OLIST_DB}
+      - POSTGRES_OLIST_USER=${POSTGRES_OLIST_USER}
+      - POSTGRES_OLIST_PASSWORD=${POSTGRES_OLIST_PASSWORD}
+
+    volumes:
+      - notebooks_db:/home/jovyan/work
+      - ./scripts:/home/jovyan/scripts
+      - spark_db:/home/jovyan/data
+      - ./src/data:/home/jovyan/data/olist
+      - ./drivers:/home/jovyan/drivers
+
+    command: >
+      start-notebook.sh
+      --IdentityProvider.token=''
+      --PasswordIdentityProvider.hashed_password=''
+
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+    networks:
+      - network_olist_lakehouse_bhv
+
+  # ==================== MINIO BUCKET INITIALIZER ====================
+  minio-init:
+    image: python:3.10-slim
+    container_name: minio-init-bhv
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./scripts:/scripts
+    command: >
+      sh -c "pip install --no-cache-dir boto3 &&
+             python /scripts/init_minio.py"
+    networks:
+      - network_olist_lakehouse_bhv
+
+  hive-metastore:
+    build:
+      context: ./hive
+
+    container_name: hive-metastore-bhv
+
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SKIP_SCHEMA_INIT: "true"
+
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      HIVE_METASTORE_DB: ${HIVE_METASTORE_DB}
+
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      HIVE_METASTORE_HOST: hive-metastore
+
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+      WAREHOUSE_PATH: ${WAREHOUSE_PATH}
+
+    ports:
+      - "9083:9083"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      
+      minio:
+        condition: service_healthy
+
+      minio-init:
+        condition: service_completed_successfully
+
+    networks:
+      - network_olist_lakehouse_bhv
+
+
+
+  trino:
+    build:
+      context: ./trino
+      dockerfile: Dockerfile
+
+    container_name: trino-bhv
+
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+
+    ports:
+      - "8084:8080"
+
+    volumes:
+      - ./trino/etc:/etc/trino
+
+    depends_on:
+      hive-metastore:
+        condition: service_started
+
+    networks:
+      - network_olist_lakehouse_bhv
+
+
+  metabase-postgres:
+    image: postgres:16
+
+    container_name: metabase-postgres-bhv
+
+    environment:
+      POSTGRES_USER: ${METABASE_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${METABASE_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${METABASE_POSTGRES_DB}
+
+    volumes:
+      - metabase_postgres_db:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${METABASE_POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - network_olist_lakehouse_bhv
+
+  metabase:
+    image: metabase/metabase:latest
+
+    container_name: metabase-bhv
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: ${METABASE_POSTGRES_DB}
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${METABASE_POSTGRES_USER}
+      MB_DB_PASS: ${METABASE_POSTGRES_PASSWORD}
+      MB_DB_HOST: metabase-postgres
+      MB_PLUGINS_DIR: /app/plugins
+
+    volumes:
+      - ./.metabase/plugins:/app/plugins
+
+    depends_on:
+      metabase-postgres:
+        condition: service_healthy
+
+    networks:
+      - network_olist_lakehouse_bhv
+
+  postgres-olist:
+    image: postgres:16
+
+    container_name: postgres-olist-bhv
+
+    ports:
+      - "${POSTGRES_OLIST_PORT}:5432"
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_OLIST_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_OLIST_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_OLIST_DB}
+
+    volumes:
+      - postgres_olist_db:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_OLIST_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - network_olist_lakehouse_bhv

@@ -1,0 +1,13 @@
+.env
+#airflow
+logs
+plugins
+.venv
+.ipynb_checkpoints
+spark-warehouse
+__pycache__
+*.pyc
+dbt
+jupyter/airflow
+.metabase
+src/data/**/*.csv
