@@ -17,7 +17,8 @@ buckets = [
     "lakehouse",
     "bronze",
     "silver",
-    "gold"
+    "gold",
+    "landing"
 ]
 
 for bucket in buckets:
