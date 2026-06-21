@@ -11,3 +11,4 @@ dbt
 jupyter/airflow
 .metabase
 src/data/**/*.csv
+scripts/artifacts/**/*.pkl
