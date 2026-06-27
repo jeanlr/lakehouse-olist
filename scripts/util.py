@@ -2767,7 +2767,6 @@ def plot_cat_vs_target_percentage(dataframe, target_column, cutoff=10):
 #############################################
 #DATAPREP
 #############################################
-
 import pandas as pd
 import numpy as np
 from sklearn.impute import SimpleImputer
@@ -2782,12 +2781,10 @@ def split_features(df):
     cat_cols = df.select_dtypes(include='object').columns.tolist()
     return num_cols, cat_cols
 
-
 # ======================================================
 # 2. IMPUTAÇÃO
 # ======================================================
 def impute_data(X_train, X_test, num_cols, cat_cols):
-
     # Numéricos
     imputer_num = SimpleImputer(strategy="mean")
     X_train_num = pd.DataFrame(
@@ -2801,56 +2798,62 @@ def impute_data(X_train, X_test, num_cols, cat_cols):
         index=X_test.index
     )
 
-    # Categóricos
-    imputer_cat = SimpleImputer(strategy="most_frequent")
-    X_train_cat = pd.DataFrame(
-        imputer_cat.fit_transform(X_train[cat_cols]),
-        columns=cat_cols,
-        index=X_train.index
-    )
-    X_test_cat = pd.DataFrame(
-        imputer_cat.transform(X_test[cat_cols]),
-        columns=cat_cols,
-        index=X_test.index
-    )
+    # Categóricos — só executa se existirem colunas categóricas
+    imputer_cat = None
+    X_train_cat = pd.DataFrame(index=X_train.index)
+    X_test_cat  = pd.DataFrame(index=X_test.index)
+
+    if cat_cols:
+        imputer_cat = SimpleImputer(strategy="most_frequent")
+        X_train_cat = pd.DataFrame(
+            imputer_cat.fit_transform(X_train[cat_cols]),
+            columns=cat_cols,
+            index=X_train.index
+        )
+        X_test_cat = pd.DataFrame(
+            imputer_cat.transform(X_test[cat_cols]),
+            columns=cat_cols,
+            index=X_test.index
+        )
 
     return X_train_num, X_test_num, X_train_cat, X_test_cat, imputer_num, imputer_cat
-
 
 # ======================================================
 # 3. TARGET ENCODER
 # ======================================================
 def encode_categories(X_train_cat, X_test_cat, y_train):
+    # Retorna DataFrames vazios se não houver colunas categóricas
+    if X_train_cat.empty:
+        return (
+            pd.DataFrame(index=X_train_cat.index),
+            pd.DataFrame(index=X_test_cat.index),
+            None
+        )
 
     encoder = TargetEncoder()
     train_encoded = encoder.fit_transform(X_train_cat, y_train)
-    test_encoded = encoder.transform(X_test_cat)
+    test_encoded  = encoder.transform(X_test_cat)
 
-    # Manter como DataFrame
     train_encoded = pd.DataFrame(train_encoded, columns=X_train_cat.columns, index=X_train_cat.index)
-    test_encoded = pd.DataFrame(test_encoded, columns=X_test_cat.columns, index=X_test_cat.index)
+    test_encoded  = pd.DataFrame(test_encoded,  columns=X_test_cat.columns,  index=X_test_cat.index)
 
     return train_encoded, test_encoded, encoder
-
 
 # ======================================================
 # 4. FEATURE SELECTION VIA CORRELAÇÃO
 # ======================================================
 def drop_correlated_features(df_train, df_test, threshold=0.5):
-
     corr_matrix = df_train.corr().abs()
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
-
     to_drop = [col for col in upper.columns if any(upper[col] > threshold)]
-
     df_train = df_train.drop(columns=to_drop)
-    df_test = df_test.drop(columns=to_drop)
-
+    df_test  = df_test.drop(columns=to_drop)
     return df_train, df_test, to_drop
 
-
+# ======================================================
+# 5. DATAPREP PRINCIPAL
+# ======================================================
 def dataprep(X_train, X_test, y_train):
-
     # 1. Separar colunas numéricas e categóricas
     num_cols, cat_cols = split_features(X_train)
 
@@ -2859,14 +2862,14 @@ def dataprep(X_train, X_test, y_train):
         X_train, X_test, num_cols, cat_cols
     )
 
-    # 3. Target Encoding
+    # 3. Target Encoding (retorna vazio se não houver categóricas)
     Xtr_cat_enc, Xte_cat_enc, encoder = encode_categories(
         Xtr_cat, Xte_cat, y_train
     )
 
-    # 4. Concatenar
+    # 4. Concatenar (concat ignora DataFrames vazios naturalmente)
     train_final = pd.concat([Xtr_num, Xtr_cat_enc], axis=1)
-    test_final = pd.concat([Xte_num, Xte_cat_enc], axis=1)
+    test_final  = pd.concat([Xte_num, Xte_cat_enc], axis=1)
 
     # 5. Remover colunas altamente correlacionadas
     train_final, test_final, dropped_corr_cols = drop_correlated_features(
@@ -2874,14 +2877,14 @@ def dataprep(X_train, X_test, y_train):
     )
 
     return (
-        train_final, 
+        train_final,
         test_final,
         {
-            "num_cols": num_cols,
-            "cat_cols": cat_cols,
-            "imputer_num": imp_num,
-            "imputer_cat": imp_cat,
-            "encoder": encoder,
+            "num_cols":          num_cols,
+            "cat_cols":          cat_cols,
+            "imputer_num":       imp_num,
+            "imputer_cat":       imp_cat,       # None se não houver categóricas
+            "encoder":           encoder,        # None se não houver categóricas
             "dropped_corr_cols": dropped_corr_cols
         }
     )
